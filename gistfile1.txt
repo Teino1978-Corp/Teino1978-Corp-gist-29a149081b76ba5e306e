@@ -1,0 +1,309 @@
+package CompareImage;
+
+import com.sun.media.jai.widget.DisplayJAI;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Container;
+import java.awt.Font;
+import java.awt.GridLayout;
+import java.awt.image.RenderedImage;
+import java.awt.image.renderable.ParameterBlock;
+import java.io.File;
+import java.io.IOException;
+import javax.imageio.ImageIO;
+import javax.media.jai.InterpolationNearest;
+import javax.media.jai.JAI;
+import javax.media.jai.iterator.RandomIter;
+import javax.media.jai.iterator.RandomIterFactory;
+import javax.swing.ImageIcon;
+import javax.swing.JFileChooser;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
+
+@SuppressWarnings("serial")
+public class SimilarityCheck extends JFrame 
+{
+   
+    private Color[][]signature;                  //the ref image signature..
+    private static final int baseSize = 300;          //the basesize of image..
+    //private static final String basePath = "D:/Sovan/";   //all file location..
+     /**
+     * Create new Constructor
+     */
+    public SimilarityCheck(File reference) throws IOException 
+    {
+        //Create the GUI..
+        super("Similarity Check");
+        Container C_Pane = getContentPane();
+        C_Pane.setLayout(new BorderLayout());
+
+        RenderedImage ref = rescale(ImageIO.read(reference));
+        C_Pane.add(new DisplayJAI(ref), BorderLayout.WEST);
+        signature = calcSignature(ref); //calculate signature for the ref..
+        
+        //we need a component to store X images in a stack, where X is the number
+        // of images in the same directory as the original one.
+        
+        File[] others = getOtherImageFiles(reference);
+        Panel_1.setLayout(new GridLayout(others.length,2));
+        C_Pane.add(new JScrollPane(Panel_1), BorderLayout.CENTER);
+        
+        //for each image, calculate it signature and its distance from the ref signature..
+        RenderedImage[] R_others = new RenderedImage[others.length];
+        double[] distances = new double[others.length];
+        for (int o = 0; o < others.length; o++)
+        {
+            R_others[o] = rescale(ImageIO.read(others[o]));
+            distances[o] = calcDistance(R_others[o]);
+        }
+        
+        //sort those vectors together..
+        for(int p1 = 0; p1 < others.length - 1; p1++)
+        {
+            for(int p2 = p1 + 1; p2 < others.length; p2++)
+            {
+                if (distances[p1] > distances[p2])
+                {
+                    double tempDist = distances[p1];
+                    distances[p1] = distances[p2];
+                    distances[p2] = tempDist;
+                    RenderedImage tempR = R_others[p1];
+                    R_others[p1] = R_others[p2];
+                    R_others[p2] = tempR;
+                    File tempF = others[p1];
+                    others[p1] = others[p2];
+                    others[p2] = tempF;
+                }
+            }
+        }
+        
+        //add to the user interface.........
+        for(int o = 0; o < others.length; o++)
+        {
+            Panel_1.add(new DisplayJAI(R_others[o]));
+            lbl_Dist = new JLabel("<html>" + others[o].getName() + "<br>" + String.format("%13.3f", distances[o]) + "</html>");
+            lbl_Dist.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 36));
+            Panel_1.add(lbl_Dist);
+        }
+        //More GUI details..
+        pack();
+        setVisible(true);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);        
+    }
+
+    private SimilarityCheck() 
+    {
+        initComponents();
+        setSize(1350,640);
+    }
+    
+    //This method rescales an image using the JAI scale operator..
+    private RenderedImage rescale(RenderedImage i)
+    {
+       // Object x = null;
+        
+        float scaleW = ((float)baseSize) / i.getWidth();
+        float scaleH = ((float)baseSize) / i.getHeight();
+        
+        //Scales the original image..
+        ParameterBlock pb = new ParameterBlock();
+        pb.addSource(i);
+        pb.add(scaleW);
+        pb.add(scaleH);
+        pb.add(0.0F);
+        pb.add(0.0F);
+        pb.add(new InterpolationNearest());
+        
+        //creates a new scaled image and use it on the DisplayJAI component..
+        return JAI.create("scale", pb);
+    }
+    // This method calculates and returns signature vectors for the input image.
+    private Color[][] calcSignature(RenderedImage i)
+    {
+        // Get memory for the signature.
+        Color[][] sig = new Color[5][5];
+
+        // For each of the 25 signature values average the pixels around it.
+        // Note that the coordinate of the central pixel is in proportions.
+        float[] prop = new float[]
+        {1f / 10f, 3f / 10f, 5f / 10f, 7f / 10f, 9f / 10f};
+      for (int x = 0; x < 5; x++)
+      {
+          for (int y = 0; y < 5; y++) 
+          {
+              sig[x][y] = averageAround(i, prop[x], prop[y]);
+          }
+          return sig;
+      }
+        return null;
+    }
+    
+    private Color averageAround(RenderedImage i, double px, double py)
+    {
+        // Get an iterator for the image.
+        RandomIter iterator = RandomIterFactory.create(i, null);
+    
+        // Get memory for a pixel and for the accumulator.
+        double[] pixel = new double[3];
+        double[] accum = new double[3];
+
+        // The size of the sampling area.
+        int sampleSize = 15;
+        int numPixels = 0;
+        @SuppressWarnings("LocalVariableHidesMemberVariable")
+        double baseSize = 0;
+
+        // Sample of the pixels.
+        for (double x = px * baseSize - sampleSize; x < px * baseSize + sampleSize; x++)
+        {
+            for (double y = py * baseSize - sampleSize; y < py * baseSize + sampleSize; y++)
+            {
+                iterator.getPixel((int) x, (int) y, pixel);
+                accum[0] += pixel[0];
+                accum[1] += pixel[1];
+                accum[2] += pixel[2];
+                numPixels++;
+            }
+        }
+
+        // Average the accumulated values.
+        accum[0] /= numPixels;
+        accum[1] /= numPixels;
+        accum[2] /= numPixels;
+        return new Color((int) accum[0], (int) accum[1], (int) accum[2]);
+    }
+//------------------------------------------------------------------------------
+    /* This method calculates the distance between the signatures of an image and
+    * the reference one. The signatures for the image passed as the parameter are
+    * calculated inside the method.*/
+
+    private double calcDistance(RenderedImage other)
+    {
+      Color[][] sigOther = calcSignature(other); // Calculate the signature for that image.
+
+      /* There are several ways to calculate distances between two vectors,
+       we will calculate the sum of the distances between the RGB values of
+       pixels in the same positions. */
+
+      double dist = 0;
+      for (int x = 0; x < 5; x++)
+      {
+         for (int y = 0; y < 5; y++)
+           {
+            int r1 = signature[x][y].getRed();
+            int g1 = signature[x][y].getGreen();
+            int b1 = signature[x][y].getBlue();
+            int r2 = sigOther[x][y].getRed();
+            int g2 = sigOther[x][y].getGreen();
+            int b2 = sigOther[x][y].getBlue();
+            double tempDist = Math.sqrt((r1 - r2) * (r1 - r2) + (g1 - g2) * (g1 - g2) + (b1 - b2) * (b1 - b2));
+            dist += tempDist;
+           }
+           return dist;
+      }
+      return 0;
+   }
+   @SuppressWarnings(unchecked)
+   private File[] getOtherImageFiles(File reference) 
+    {
+       File dir = new File(reference.getParent());
+       File[] others = dir.listFiles(new ImageFileFilter());
+       return others;        
+    }
+    private void txt_path2ActionPerformed(java.awt.event.ActionEvent evt) {                                          
+
+    }                                         
+
+    private void b_BrowseActionPerformed(java.awt.event.ActionEvent evt) {                                         
+       
+        //FOR CUSTOM DIALOG TITLE...........
+        FChooser.setDialogTitle("Choose a photo");
+        
+        //FOR THE PURPOSE OF FILTERING........
+        FChooser.setFileFilter(new ImageFileFilter());
+        
+        
+        int response=FChooser.showOpenDialog(this);
+        if(response==JFileChooser.APPROVE_OPTION)
+        {
+           // jLabel1.setText(FChooser.getSelectedFile().toString());
+           // String f = FChooser.getSelectedFile().toString();
+            
+            File f=FChooser.getSelectedFile();
+            String filename = f.getAbsolutePath();
+            lbl_Dist.setIcon(new ImageIcon(""+f));
+            txt_path1.setText(filename);
+        }
+        else
+        {
+            JOptionPane.showMessageDialog(this,"Browse canceled by the user");
+        }
+ 
+    }                                        
+
+    private void b_EXITActionPerformed(java.awt.event.ActionEvent evt) {                                       
+        System.exit(0);
+    }                                      
+
+    private void b_GotoActionPerformed(java.awt.event.ActionEvent evt) {                                       
+                 
+        FChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        
+        //CUSTOM DIALOG TITLE.................
+        FChooser.setDialogTitle("Open File Location..");
+        
+        //FOR THE PURPOSE OF FILTERING........
+        FChooser.setFileFilter(new ImageFileFilter());
+        
+        int response=FChooser.showOpenDialog(this);
+        if(response==JFileChooser.APPROVE_OPTION)
+        {            
+            File f=FChooser.getSelectedFile();
+            String directory = f.getAbsolutePath();
+            txt_path2.setText(directory);
+        }
+        else
+        {
+            JOptionPane.showMessageDialog(this,"Operation canceled by the user");
+        }
+    }                                      
+
+    private void txt_path1ActionPerformed(java.awt.event.ActionEvent evt) {                                          
+    }                                         
+
+    private void FChooserActionPerformed(java.awt.event.ActionEvent evt) {                                         
+        
+        FChooser.setFileFilter(new ImageFileFilter());
+        int response = FChooser.showOpenDialog(null);
+        if (response == JFileChooser.APPROVE_OPTION)
+        {
+            File f = FChooser.getSelectedFile();
+        }        
+    }                                        
+    
+    public static void main(String args[]) throws IOException
+    {
+    java.awt.EventQueue.invokeLater(new Runnable() 
+        {
+            public void run() 
+            {
+                new SimilarityCheck().setVisible(true);
+            }
+        });
+    }
+    // Variables declaration - do not modify                     
+    private javax.swing.JFileChooser FChooser;
+    private javax.swing.JMenuBar MenuBar;
+    private javax.swing.JScrollPane Panel_1;
+    private javax.swing.JButton b_Browse;
+    private javax.swing.JButton b_EXIT;
+    private javax.swing.JButton b_Goto;
+    private javax.swing.JMenu jMenu1;
+    private javax.swing.JMenu jMenu2;
+    private javax.swing.JLabel lbl_Dist;
+    private javax.swing.JTextField txt_path1;
+    private javax.swing.JTextField txt_path2;
+    // End of variables declaration                   
+}
